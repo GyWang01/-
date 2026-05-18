@@ -1,0 +1,265 @@
+\chapter{便携式 EMT 系统性能评估与实验验证}
+\markboth{便携式 EMT 系统性能评估与实验验证}{}
+
+在前述章节中，本文分别完成了面向道岔伤损检测的 SCF-DeepONet 模型设计与训练优化，以及便携式 EMT 硬件平台的设计与实现。为了进一步验证所提出系统的工程可用性，本章从系统级角度出发，对软硬件协同后的整体性能进行评估，并通过实际仿损样本测试验证系统在道岔伤损检测任务中的应用能力。
+
+本章首先简要介绍下位机控制、上位机数据解析与模型推理构成的系统工作流程；随后，从正交锁相环、锁相放大链路、激励信号源、通道一致性以及数据采集稳定性等方面，对硬件系统的基础性能进行测试；在此基础上，对系统单帧测量周期进行实时性分析；最后，结合道岔仿损试块实验，综合评估本文所研制系统的实际性能。
+
+\section{系统软件与测试流程概述}
+
+为实现从底层电磁响应采集到上位机成像显示的完整闭环，本文构建了由下位机嵌入式控制程序与上位机数据处理程序组成的软件系统。该软件系统与硬件平台共同构成``激励产生--通道切换--电磁感应--信号调理--锁相解调--模数转换--数据传输--成像显示''的完整工作链路。
+
+\subsection{下位机嵌入式控制程序}
+
+下位机以 STM32F407VGT6 为核心控制器，主要负责激励配置、通道切换、模数转换读取、校准流程管理以及数据封包上传等任务。在测量过程中，主控按照预设时序依次控制激励继电器与接收复用网络，完成 16 线圈阵列的分时扫描；同时，对锁相解调后得到的同相、正交直流量进行采集与整理。随后，下位机将各通道测量结果按照统一格式打包，并通过蓝牙链路上传至上位机。
+
+嵌入式程序中集成了两类关键校准功能：一是\textbf{增益校准}，系统通过将校准源接入接收链路，在不同增益控制电压下建立 DAC 控制字与实际总增益的映射表，以补偿模拟链路器件温漂和电阻公差；二是\textbf{空场基准校准}，系统在无试块条件下采集各通道互感响应作为基准，后续实测数据通过差分运算削弱通道寄生参数差异带来的系统性偏置。上述校准流程显著提高了多通道复数响应的一致性和可重复性。
+
+\subsection{上位机数据解析与模型推理程序}
+
+上位机软件采用 kivy+kivyMD 框架开发，支持 PC 端与移动端部署，承担数据接收、解析、可视化与模型推理功能。其工作流程为：首先通过蓝牙接收下位机上传的数据帧，解析通道号、状态字和测量值；随后根据增益校准表和空场基准对原始数据进行补偿与差分归一化，整理为 SCF-DeepONet 所需的 $16\times15\times9$ 结构化输入张量；最后根据实验需求，调用传统 EMT 成像算法或预训练的 SCF-DeepONet 模型进行伤损热图预测，并以二维概率热力图形式输出检测结果。
+
+这种``下位机负责实时时序控制与数据采集，上位机负责数据解析与离线模型推理''的分工方式，既降低了嵌入式端的计算与存储压力，也便于后续灵活更换或升级成像算法，而无需修改底层硬件固件。
+
+\section{硬件系统基础性能测试}
+
+为了验证便携式 EMT 系统在实际应用前是否具备稳定可靠的测量基础，本文对硬件平台的关键功能模块进行了测试。测试内容包括正交锁相环、锁相放大链路、激励信号源、通道一致性以及数据采集稳定性等方面。
+
+\subsection{正交锁相环测试}
+
+正交锁相环模块负责为双通道相敏检波提供稳定的同频正交参考信号，其输出质量直接影响后续同相与正交分量的解调精度。因此，本文首先对该模块的稳态锁定能力和动态跟踪能力进行测试。
+
+\subsubsection{稳态锁定性能测试}
+
+为评估系统在目标工作频率下的稳态锁定能力，测试中使用信号源向正交锁相环输入幅值为 5 V 的参考方波，并通过示波器同步观察锁相环输出的两路参考信号。测试结果如图 \ref{fig:pll_test} 所示。在 100 kHz 输入条件下，系统能够实现稳定锁定，并输出两路频率一致、相位近似正交的参考信号，满足双相锁相放大器对参考时钟的要求。
+
+\begin{figure}[!htbp]
+    \centering
+    \includegraphics[width=0.78\textwidth]{figures/PLL_test.jpg}
+    \figcaption{锁相环稳态测试结果}{Steady-state test results of the phase-locked loop}
+    \label{fig:pll_test}
+\end{figure}
+
+\subsubsection{频率阶跃响应测试}
+
+为进一步验证锁相环的动态响应能力，本文对其进行了频率阶跃测试。测试中，将输入参考信号设置为在 95 kHz 与 105 kHz 之间切换的频率信号，并记录锁相环的闭环瞬态响应。测试结果如图 \ref{fig:pll_step_response} 所示。可以看出，当输入频率发生变化后，系统能够在较短时间内重新建立锁定，且响应过程平滑，无明显超调现象。另外，通过调节输入信号频率，测得该锁相环的锁相范围在30kHz--300kHz之间，能够覆盖本文设计的 100 kHz 主工作点及其附近频段。
+
+该结果说明，所设计的正交锁相环不仅能够满足 100 kHz 主工作点下的稳定运行要求，也具备一定频段范围内的频率适应能力，可为后续锁相放大链路提供稳定可靠的正交参考信号。
+
+\begin{figure}[!htbp]
+    \centering
+    \includegraphics[width=0.78\textwidth]{figures/PLL_step_response.jpg}
+    \figcaption{锁相环阶跃响应测试结果}{Step response test results of the phase-locked loop}
+    \label{fig:pll_step_response}
+\end{figure}
+
+\subsection{锁相放大器测试}
+
+锁相放大链路承担微弱感应信号提取与复数响应解调任务，其性能直接决定系统对微小伤损扰动的分辨能力。针对该模块，本文搭建了与测控系统相匹配的模拟信号测试环境，通过人工设定幅值和相位的输入信号，评估锁相放大器的增益精度与带宽特性。
+
+测试结果如图 \ref{fig:lockin_bandwidth} 所示。在 1 Hz 调制信号条件下，系统能够稳定跟踪输入信号的同相与正交变化，说明锁相放大链路具备良好的低频响应能力。当调制频率提高至 1.15 kHz 时，输出幅值出现明显衰减，衰减比例约为 70\%，表明系统已经接近-3dB带宽边界。该结果与第五章中低通滤波器的设计预期近似一致，说明系统采用较低截止频率能够有效抑制宽带噪声，同时也限制了信号快速变化时的响应速度。
+
+\begin{figure}[!htb]
+    \centering
+
+    \begin{minipage}[c]{0.64\textwidth}
+        \centering
+        \includegraphics[width=\textwidth]{figures/lock_in_bandwidth2.jpg}\\[-2pt]
+        {\zihao{5}(a) 1 Hz 调制信号解调波形 \\ {\zihao{5}(a) 1 Hz demodulated modulation signal waveform}}
+    \end{minipage}
+
+    \vspace{0.20cm}
+
+    \begin{minipage}[c]{0.64\textwidth}
+        \centering
+        \includegraphics[width=\textwidth]{figures/lock_in_bandwidth1.jpg}\\[-2pt]
+        {\zihao{5}(b) 1.15 kHz 调制信号解调波形\\ {\zihao{5}(b) 1.15 kHz demodulated modulation signal waveform}}
+    \end{minipage}
+
+    \figcaption{锁相放大器解调带宽测试波形}{Waveforms of lock-in amplifier demodulation bandwidth test}
+    \label{fig:lockin_bandwidth}
+\end{figure}
+
+\subsection{激励信号源性能测试}
+
+激励链路负责在线圈阵列中建立稳定的交变磁场，因此其输出幅值、频率稳定性以及负载条件下的一致性会直接影响后续测量结果。针对激励模块，本文分别测试了系统在带载与非带载情况下的输出波形与幅值稳定性。
+
+图 \ref{fig:excitation_signal} 给出了激励信号源在 100 kHz 条件下的输出波形。可以看出，系统能够输出稳定的正弦激励信号，波形无明显畸变，满足线圈阵列激励需求。进一步地，使用台式万用表对输出幅值进行连续监测，结果如图 \ref{fig:excitation_stability} 所示。在长时间连续工作过程中，无论是否接入线圈负载，输出幅值均保持较好的稳定性。其中，带载情况下的幅值明显低于非带载情况，波动略大于非带载情况，这与线圈感性负载及驱动电流变化有关，但整体仍处于可接受范围内。
+
+该测试结果说明，激励信号源能够在 100 kHz 主工作点下提供稳定的交流激励，为阵列式 EMT 测量提供可靠的一次磁场输入。
+
+\begin{figure}[!htbp]
+    \centering
+    \includegraphics[width=0.64\textwidth]{figures/excitation_signal.jpg}
+    \figcaption{激励信号源输出波形}{Output waveform of the excitation signal source}
+    \label{fig:excitation_signal}
+\end{figure}
+
+\begin{figure}[!htbp]
+    \centering
+
+    \begin{minipage}[t]{0.47\textwidth}
+        \centering
+        \includegraphics[width=\textwidth]{figures/Vpp_without_load.jpg}\\[-2pt]
+        {\zihao{5}(a) 不带载\\ {\zihao{5}(a) Unloaded}}
+    \end{minipage}
+    \hfill
+    \begin{minipage}[t]{0.47\textwidth}
+        \centering
+        \includegraphics[width=\textwidth]{figures/Vpp_with_load_Stability.jpg}\\[-2pt]
+        {\zihao{5}(b) 带载\\ {\zihao{5}(b) loaded}}
+    \end{minipage}
+
+    \figcaption{激励信号源输出稳定性测试}{Stability test results of the excitation signal source}
+    \label{fig:excitation_stability}
+\end{figure}
+
+\subsection{通道一致性测试}
+
+在 EMT 系统中，测量结果来自多个线圈通道的分时复用。若不同通道之间的响应一致性较差，则会引入额外的系统误差，影响后续差分测量与图像重建结果。因此，有必要对阵列通道的一致性进行测试。
+
+本测试采用Agilent 4262B阻抗分析仪反向测量线圈通道的幅值与相位响应的方式。具体做法是将信号切换板的输出通道连接到阻抗分析仪输入端，通过程序控制切换板上的多路复用器依次切换不同检测通道，记录每个通道在100kHz下的幅值与相位响应。据此可以评估通道切换网络、保护电路和放大链路对测量一致性的影响。
+
+测试结果如图 \ref{fig:channel_consistency} 所示。各通道幅值均值约为 303.125，极差为 5.310；相位均值约为 $9.98^\circ$，极差为 $0.910^\circ$。整体来看，各通道之间的一致性较好。根据戴维南等效定理，在实际测量中，线圈通道的信号源阻抗与测控板输入阻抗之间仍可能产生一定影响，但该测试结果说明系统通道切换与接收链路本身具有较好的稳定性，为后续多通道测量提供了基础。
+
+\begin{figure}[!htbp]
+    \centering
+    \includegraphics[width=0.76\textwidth]{figures/coil_channel_utility.jpg}
+    \figcaption{通道一致性测试结果}{Consistency test results of the coil channels}
+    \label{fig:channel_consistency}
+\end{figure}
+
+\subsection{数据采集与增益校准测试}
+
+为提高微弱信号测量精度，系统采用 AD603 可调增益放大器对接收信号进行动态范围调节。由于 AD603 的增益由控制电压决定，因此需要在系统级对其增益调节特性进行校准。
+
+测试中，在系统稳定运行后，通过 DAC 输出不同控制电压调节 AD603 增益，同时使用高精度万用表记录放大器输入与输出电压，建立控制电压与实际增益之间的对应关系。测试结果如图 \ref{fig:gain_calibration} 所示。可以看出，在设计控制范围内，AD603 增益随控制电压变化呈现较好的单调性和近似线性趋势。该结果为系统后续根据输入信号幅值自动选择合适增益提供了标定依据。
+
+\begin{figure}[!htb]
+    \centering
+    \includegraphics[width=0.68\textwidth]{figures/AD603_VG.jpg}
+    \figcaption{增益校准测试结果}{Gain calibration test results of the AD603 amplifier}
+    \label{fig:gain_calibration}
+\end{figure}
+
+除增益校准外，本文还开展了空场条件下的采样测试，用以评估整体数据采集链路的可靠性。图 \ref{fig:mutual_voltage} 给出了空场条件下线圈对之间的互感电压测试结果。在系统稳定运行后，采样结果具有较好一致性，图中可以看出主要通道的互感电压集中在约 0.5 V 附近，而远离激励线圈的通道响应较小，可低至几百微伏量级。该结果与仿真中线圈阵列的空间耦合特征基本一致，说明系统能够同时覆盖较强互感响应和弱耦合响应，为后续缺陷差分测量提供了可靠的数据基础。
+
+\begin{figure}[!htb]
+    \centering
+    \includegraphics[width=0.94\textwidth]{figures/MutualVoltage_BarChart.png}
+    \figcaption{空场线圈对互感电压测试结果}{Mutual voltage test results of the coil pairs}
+    \label{fig:mutual_voltage}
+\end{figure}
+
+此外，根据互易定理，上``线圈 $i$ 激发、线圈 $j$ 接收''的互感电压，理论上应该等于``线圈 $j$ 激发、线圈 $i$ 接收''的电压。根据这一理论基础，本文还对互感电压的对称性进行了测试，其误差分布如图
+\ref{fig:reciprocity_error} 所示，其误差最大值为4.3544\%，平均值为1.2700\%，说明本系统从激励到采集整体设计表现良好。
+
+\begin{figure}[!htb]
+    \centering
+    \includegraphics[width=0.52\textwidth]{figures/Reciprocity_Error_Square.png}
+    \figcaption{互易性误差测试结果}{Reciprocity error test results}
+    \label{fig:reciprocity_error}
+\end{figure}
+
+\section{系统实时性分析}
+
+在电磁层析成像系统中，图像反演质量依赖于前端硬件采集数据的信噪比，而较高的信噪比通常需要以一定测量时间为代价。因此，有必要对本文系统的单帧测量时间进行估算，以评价其是否满足便携式巡检场景的使用需求。
+
+在单帧测量过程中，每个线圈依次作为激励源，其余线圈作为接收端，因此系统需要完成 $16\times15=240$ 次互感测量。此外，为监测激励源稳定性，系统在每个激励轮询过程中额外采集激励电流信息。因此，单帧数据共包含 256 个测量通道。单通道测量时间 $T_{ch}$ 可表示为
+\begin{equation}
+\label{eq:t_ch}
+T_{ch}=T_{switch}+T_{LPF}+2T_{conv},
+\end{equation}
+式中，$T_{switch}$ 为继电器与模拟开关完成通道切换后的稳定时间；$T_{LPF}$ 为锁相放大器后级低通滤波器的稳态建立时间；$T_{conv}$ 为 ADC 单次转换时间。由于同相与正交两路直流量均需采集，因此式中包含两次 ADC 转换时间。
+
+根据实验设置，本文中通道切换稳定时间约为 3 ms，滤波器稳态建立时间约为 0.7 ms，ADC 单次转换时间约为 1 ms。因此，单通道测量时间约为
+\begin{equation}
+\label{eq:t_ch_value}
+T_{ch}\approx 3+0.7+2\times1=5.7\,\mathrm{ms}.
+\end{equation}
+进一步可得单帧测量周期为
+\begin{equation}
+\label{eq:t_frame}
+T_{frame}=N_{channels}T_{ch}=256\times5.7\,\mathrm{ms}\approx1.46\,\mathrm{s}.
+\end{equation}
+
+由此可见，在当前前端滤波器配置与采样策略下，系统完成一帧完整 EMT 测量约需 1.5 s。对于道岔巡检场景而言，该时间尺度能够满足人工手持或定点扫描检测的使用需求。同时，由于单帧测量时间主要受滤波器稳态建立时间和通道切换时间影响，若后续应用场景对速度要求更高，可通过提高低通滤波器截止频率、优化继电器切换时序或采用并行采集结构进一步提升测量效率。
+
+\section{道岔仿损检测试验与成像验证}
+
+在完成基础性能测试后，本文进一步搭建了道岔仿损检测实验平台，对所研制便携式 EMT 系统在实际检测任务中的应用能力进行验证。实验对象采用机加工缺陷铁磁试块，用以等效模拟道岔表面及近表面伤损。测试过程中，系统采集阵列线圈在不同激励条件下的复数响应，并分别采用传统 EMT 成像方法和 SCF-DeepONet 模型进行结果分析。
+
+图 \ref{fig:experiment_platform} 给出了本文搭建的实验平台实物图。可以看出，传感器阵列贴近铁磁试块表面布置，测控板与信号切换板共同完成激励、接收、解调和数据回传。该实验平台能够较好模拟实际便携式检测中的传感器贴附和硬件采集过程。
+
+\begin{figure}[!htb]
+    \centering
+
+    \begin{minipage}[t]{0.48\textwidth}
+        \centering
+        \includegraphics[width=\textwidth]{figures/experiment1.jpg}\\[-2pt]
+        {\zihao{5}(a) 伤损检测平台正照\\ {\zihao{5}(a) Front view of the damage detection platform}}
+    \end{minipage}
+    \hfill
+    \begin{minipage}[t]{0.48\textwidth}
+        \centering
+        \includegraphics[width=\textwidth]{figures/experiment2.jpg}\\[-2pt]
+        {\zihao{5}(b) 伤损检测平台背照\\ {\zihao{5}(b) Back view of the damage detection platform}}
+    \end{minipage}
+
+    \figcaption{伤损检测实验平台实物图}{Physical photo of the defect detection platform}
+    \label{fig:experiment_platform}
+\end{figure}
+
+图 \ref{fig:real_defect_compare} 给出了典型仿损样本的成像与预测结果对比。其中，传统成像方法能够反映缺陷区域的大致扰动趋势，但在双缺陷样本中容易出现响应区域偏移、缺陷数量分辨不足以及伪影增强等问题。相比之下，SCF-DeepONet 模型能够较为准确地给出两个缺陷区域的位置响应。虽然其边界仍存在一定平滑和扩散现象，但整体检测结果与实物缺陷位置更加一致。
+
+这一结果表明，传统线性成像方法在高导电率、高磁导率铁磁背景下容易受到软场效应和逆问题病态性的影响，难以稳定区分复杂多缺陷区域；而本文所提出的 SCF-DeepONet 模型通过多视角电压观测和场量辅助监督学习，能够在一定程度上建立从边界响应到缺陷位置之间的非线性映射关系，从而提高检测结果的定位稳定性。
+
+需要指出的是，当前实验仍属于实验室仿损样本验证阶段，样本数量、缺陷形态和现场环境复杂度均有限。因此，图 \ref{fig:real_defect_compare} 的结果主要用于验证系统链路的可行性和模型在实测数据上的初步适用性。后续研究仍需进一步扩大实测样本规模，并结合更多不同尺寸、深度和位置的缺陷样本，对系统的泛化能力和现场适应性进行更充分的评估。
+
+\begin{figure}[!htb]
+    \centering
+
+    \begin{minipage}[t]{0.24\textwidth}
+        \centering
+        \includegraphics[width=1\textwidth]{figures/lbp1.jpg}\\[-2pt]
+        {\zihao{5}(b) LBP}
+
+    \end{minipage}
+    \hfill
+    \begin{minipage}[t]{0.24\textwidth}
+        \centering
+        \includegraphics[width=1\textwidth]{figures/tik1.jpg}\\[-2pt]
+        {\zihao{5}(c) Tikhonov}
+    \end{minipage}
+    \hfill
+    \begin{minipage}[t]{0.24\textwidth}
+        \centering
+        \includegraphics[width=1\textwidth]{figures/landwber1.jpg}\\[-2pt]
+        {\zihao{5}(a) Landweber}
+    \end{minipage}
+    \hfill
+    \begin{minipage}[t]{0.24\textwidth}
+        \centering
+        \includegraphics[width=0.98\textwidth]{figures/scf-deeponet1.jpg}\\[-2pt]
+        {\zihao{5}(d) SCF-DeepONet}
+    \end{minipage}
+
+    \vspace{0.25cm}
+
+    \begin{minipage}[t]{0.90\textwidth}
+        \centering
+        \includegraphics[width=0.36\textwidth, angle=90]{figures/iron_bulk.jpg}\\[-2pt]
+        {\zihao{5}(e) 机加工伤损实物图\\ {\zihao{5}(e) machining-induced damage}}
+    \end{minipage}
+
+    \figcaption{不同成像算法预测结果与实验实物对比}{Comparison of imaging results from different algorithms and the physical object}
+    \label{fig:real_defect_compare}
+\end{figure}
+
+\section{本章小结}
+
+本章对便携式 EMT 系统进行了性能评估与实验验证。首先，概述了下位机控制、数据采集、上位机解析和模型推理构成的系统工作流程，明确了软件部分在整机实验中的功能定位。随后，分别对正交锁相环、锁相放大链路、激励信号源、通道一致性以及数据采集稳定性进行了测试。测试结果表明，系统能够在 100 kHz 主工作点下提供稳定的正交参考、激励输出和多通道测量响应，具备开展阵列式 EMT 检测实验的基础条件。
+
+在实时性方面，本文根据通道切换、滤波器建立和 ADC 转换时间估算得到系统单帧测量周期约为 1.46 s，能够满足实验室仿损样本检测和便携式巡检验证需求。最后，基于机加工缺陷铁磁试块开展了仿损检测试验，采用了三种传统成像方法以及本文提出的深度学习算法。实验结果表明，四种算法均能在本文设计的系统中检测到缺陷是否存在以及缺陷位置，其中Landwber 和 SCF-DeepONet 能够在实测数据上给出较好的对缺陷形状的响应，体现了本文硬件平台与智能反演模型协同工作的可行性。
+
+总体而言，本章验证了便携式 EMT 系统从前端激励、阵列采集、锁相解调到上位机成像与模型推理的完整链路，为后续开展更大规模实测样本采集、复杂缺陷检测和现场化应用奠定了实验基础。

@@ -1,0 +1,84 @@
+%%%%%%%%%%%% 选择学位类型：专硕%%%%%%%%%%
+\documentclass[EnMaster]{BJTU-thesis}  %%专硕
+\usepackage[T1]{fontenc}  %设置英文字体为times new roman
+\usepackage{mathptmx}
+\usepackage{threeparttable}
+\usepackage{tabularx}
+\usepackage{booktabs} 
+\captionsetup{justification=centering}
+% 双语双图标号命令：第一行中文"图"，第二行英文"Fig."
+\newcommand{\figcaption}[2]{%
+    \caption{#1}%                                    % 中文标题：图 1-1 xxx
+    \vspace{-4pt}%                                   % 收紧两行间距
+    {\centering\zihao{5}Fig.\,\thefigure\quad #2\par}%  % 英文标题：Fig. 1-1 xxx
+    \vspace{4pt}%
+}
+\newcommand{\tabcaption}[2]{%
+    \caption{#1}%
+    \vspace{-2pt}%
+    {\centering\zihao{5}Table~\thetable\quad #2\par}%
+    \vspace{4pt}%
+}
+
+\renewcommand\theequation{\arabic{chapter}-\arabic{equation}}
+% \tolerance=2000
+% \emergencystretch=3em
+
+%%%%%%%%%%%%%%%%%填写封面信息%%%%%%%%%%%%%%%%%%%%%%%%
+\author{XXX}                                  %作者姓名
+\studentNumber{XXX}                       %作者学号
+\advisor{XXX}                                 %导师姓名
+\advisorTitle{XXX}                            %导师职称
+\degreeType{工学}                              %学位类别
+\major{控制工程}                         %所属专业
+\researchArea{智能仪器与测控系统设计}                        %研究方向
+\title{便携式道岔伤损检测电磁层析成像系统设计与实现}                               %论文题目
+\englishtitle{Design and Implementation of Portable Turnout Damage Detection Electromagnetic Tomography System}           %论文题目英文
+\datetime{2026年4月}                           %编辑日期
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%\setmainfont{Times New Roman}
+
+\begin{document}
+	\makecover
+	\makeAuthorization
+	\makeInfo
+	% \include{chapters/thanks} 									 %致谢部分
+	\include{chapters/abstract}   								 %中文摘要
+	\include{chapters/englishabstract}  					     %英文摘要
+    % \include{chapters/preface}                                 %序言
+
+	\tableofcontents
+    \newpage\pagenumbering{arabic}
+
+     %正文部分
+    \include{chapters/chapter01} 								%引言
+    \include{chapters/chapter02} 								%第二章
+	\include{chapters/chapter03} 								%第三章
+	\include{chapters/chapter04} 								%第四章
+	\include{chapters/chapter05} 								%第五章
+	\include{chapters/chapter06}								%第六章
+	\include{chapters/chapter07}								%第七章
+
+	% \bibliographystyle{gbt7714-numerical}
+	\bibliography{references}
+	% \nocite{*}
+	% \bibliography{references}
+
+     \backmatter
+	%\begin{appendix}
+		% \input{chapters/appendix01}
+	%\end{appendix}
+
+    %  \include{chapters/index}	
+
+	% \include{chapters/mresume}
+
+	\include{chapters/statement} 	
+
+     \include{chapters/dataset}						
+
+
+\end{document}
+
+

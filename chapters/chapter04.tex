@@ -1,0 +1,411 @@
+\chapter{SCF-DeepONet 模型优化与实验结果分析}
+\label{ch:experiment_analysis}
+\markboth{SCF-DeepONet 模型优化与实验结果分析}{}
+
+在第三章中，本文完成了 SCF-DeepONet 网络结构、多任务损失函数以及四阶段训练策略的设计。为了进一步验证该模型在道岔伤损 EMT 检测任务中的有效性，本章从实验设置、网络架构消融、监督学习基线构建、A 场辅助任务作用以及分布外泛化能力等方面展开分析。
+
+本章首先介绍数据划分、训练配置及评价指标体系；随后通过消融实验对比 SCF-DeepONet 与经典 DeepONet 基线，验证网络架构设计的有效性——这是评估后续训练策略与辅助任务贡献的前提；在此基础上，进一步构建纯热图监督与热图--场量联合监督两类基线模型，前者代表不借助三维场信息的检测能力上限，后者代表引入 A 场辅助监督后的检测与泛化性能；进而比较两类模型在同分布矩形伤损和圆形伤损零样本测试中的表现，重点分析三维磁矢势差场辅助任务对二维伤损检测鲁棒性和分布外泛化能力的影响。最后讨论基于麦克斯韦方程的 PDE 弱物理约束对三维场重构一致性的提升作用——该阶段承接 Stage 2 的 PINN 预实验，以严格微分约束进一步强化三维场的物理一致性，并明确其对二维检测任务的非直接关联性。
+
+\section{实验设置与评价指标}
+\label{sec:experimental_setup}
+
+为了客观评估 SCF-DeepONet 在二维伤损检测、三维场重构以及物理一致性方面的性能，本文从数据划分、训练设置、热图检测指标、三维场评价指标和配对统计分析方法五个方面构建实验体系。
+
+\subsection{数据划分与训练设置}
+\label{subsec:data_split}
+
+本文所使用的矩形伤损数据集由有限元仿真批量生成，并按照物理样本级别进行划分。所谓物理样本级别划分，是指同一个伤损几何构型下的所有激励响应均只出现在同一个数据子集中，避免同一伤损样本在不同激励视角下同时进入训练集与验证集或测试集，从而造成信息泄漏。
+
+在具体实验中，首先构建训练集与验证集，用于网络参数更新、阶段最优模型选择和超参数调整。其中，训练集包含 850 个物理伤损样本，验证集包含 150 个物理伤损样本。此外，本文单独保留一组在训练过程中完全不可见的独立测试集，共 65 个矩形伤损样本，用于最终性能评估。除矩形伤损测试外，本文还额外构建一组圆形伤损零样本测试集，共 50 个样本，用于评估模型对未见过伤损形状的分布外泛化能力。
+
+所有模型均基于 PyTorch 框架实现，优化器采用 AdamW，并结合基于验证集指标的学习率调度机制控制训练过程\citep{loshchilov2017decoupled}。在纯监督主线训练中，基础学习率设置为 $3\times10^{-4}$；在后续热图精修或物理微调阶段，则进一步降低学习率，并仅对特定模块进行小幅参数更新。为保证不同实验组之间比较的公平性，本文所有对比实验均采用一致的数据划分、随机种子和阶段性模型选择规则。对于每个训练阶段，均根据该阶段的核心验证指标保存最优模型，而不是简单采用最后一个训练轮次的模型作为最终结果。
+
+\subsection{热图检测评价指标}
+\label{subsec:heatmap_metrics}
+
+二维热图分支的任务是在探测平面上输出伤损区域的概率分布，因此本文采用交并比（Intersection over Union, IoU）作为热图检测性能的核心评价指标。设模型输出经过阈值化后的预测伤损区域为 $P$，真实伤损掩膜为 $G$，则 IoU 定义为
+\begin{equation}
+\label{eq:iou_definition}
+IoU=\frac{|P\cap G|}{|P\cup G|}.
+\end{equation}
+
+在 EMT 逆散射问题中，不同伤损尺寸、位置以及边界条件会导致样本难度呈现明显的长尾分布。若仅使用测试集平均 IoU 作为评价标准，容易掩盖模型在困难样本上的真实表现。因此，本文在热图检测任务中同时报告以下统计量：
+
+\begin{itemize}
+    \item \textbf{Mean IoU}：测试集中所有样本 IoU 的平均值，用于反映模型整体检测能力；
+    \item \textbf{Median IoU}：测试集中所有样本 IoU 的中位数，用于反映典型样本上的检测水平；
+    \item \textbf{Worst-10 Avg IoU}：测试集中 IoU 最低的 10 个样本的平均值，用于衡量模型在长尾困难工况下的保底检测能力。
+\end{itemize}
+
+对于圆形伤损零样本测试，由于其伤损几何形状与训练阶段所采用的矩形标签分布存在显著差异，因此上述指标还可用于评价模型在分布外形状条件下的迁移能力。
+
+\subsection{三维场评价指标}
+\label{subsec:field_metrics}
+
+对于三维差场重构任务，本文采用均方根误差（Root Mean Square Error, RMSE）衡量预测差场 $\Delta \hat{A}$ 与真实差场 $\Delta A$ 之间的一致性。设单个样本中参与评估的三维点数为 $N_{3D}$，RMSE定义式\ref{eq:L_A}一致。
+
+与二维检测任务类似，本文不仅报告测试集上的平均场误差（Mean RMSE），还同时统计中位数误差（Median RMSE）、90\% 分位数误差（P90 RMSE）以及误差最大的前 10 个样本均值（Worst-10 Avg RMSE）。其中，P90 RMSE 与 Worst-10 Avg RMSE 更适合刻画模型在复杂边界、极端样本或局部非物理畸变工况下的表现。
+
+\subsection{配对统计分析方法}
+\label{subsec:statistical_analysis}
+
+在比较 NoPDE 与 PDE 模型时，PDE 弱物理约束对性能的影响通常表现为``小幅但一致''的变化。若仅比较测试集平均 RMSE，往往难以判断这种改善是否真正作用于多数样本。为此，本文引入逐样本配对统计分析方法。
+
+具体而言，对同一测试样本分别计算 NoPDE 模型与 PDE 模型下的三维场重构误差，并定义误差差值为
+\begin{equation}
+\label{eq:delta_rmse}
+\Delta RMSE
+=
+RMSE_{\mathrm{PDE}}
+-
+RMSE_{\mathrm{NoPDE}}.
+\end{equation}
+当 $\Delta RMSE<0$ 时，说明引入 PDE 后该样本的场重构误差下降。通过统计误差下降样本数量占比，可以直观判断 PDE 是否在多数样本上产生正向作用。进一步地，本文采用 Wilcoxon 符号秩检验对配对误差分布进行非参数统计分析，以判断 PDE 引入后的性能改善是否具有统计学显著性\citep{wilcoxon1945individual}。该方法不要求误差差值服从高斯分布，适合本文这类样本数量相对有限、误差分布可能存在长尾的实验场景。
+
+\section{网络架构消融实验}
+\label{sec:ablation_experiment}
+
+在分析 SCF-DeepONet 训练策略与辅助任务作用之前，首先需要回答一个更根本的问题：第三章所提出的网络架构设计——包括共享条件化编码、Fourier 位置编码、FiLM 条件调制、CNN 特征图精修以及热图--场耦合机制——究竟为 EMT 伤损检测带来了多少实质性提升？本节通过与经典 DeepONet 基线的消融对比，对上述问题展开分析。
+
+\subsection{消融实验设计}
+\label{subsec:ablation_design}
+
+为验证 SCF-DeepONet 架构设计的有效性，本节构建两个对比模型：
+
+\textbf{（1）SCF-DeepONet（本文方法）。}  
+即第三章所提出的完整网络架构，包含共享观测编码模块（PairEncoder + Pool + Refiner）、Fourier 位置编码、FiLM 条件调制、CNN 特征图精修、注意力池化以及二维--三维热图耦合机制。
+
+\textbf{（2）VanillaDeepONet（经典基线）。}  
+该模型严格遵循 Lu 等人\upcite{lu2021learning} 提出的原始 Branch--Trunk 点积结构，仅作面向 EMT 双任务的最小必要适配：Branch 采用 Flatten + MLP 编码输入观测为单一 latent 向量 $z$；二维热图 Trunk 和三维场 Trunk 分别通过坐标输入与 $z$ 的点积运算输出预测结果。该基线不包含任何本文提出的架构创新组件（多层级 latent、Fourier 编码、FiLM、CNN 精修、热图--场耦合等）。
+
+为保证对比的公平性，两个模型在消融实验中采用完全一致的实验条件：相同的数据划分（850/150/65）、相同的四阶段训练流程、相同的 Stage 3 评估协议（冻结共享编码与场分支，仅精修热图输出头）、相同的学习率策略以及相同的评价指标。由此，Stage 3 上的性能差异可单纯归因于网络架构本身的不同。
+
+\subsection{Stage 3 热图检测与三维场重构性能对比}
+\label{subsec:ablation_stage3_results}
+
+表 \ref{tab:ablation_comparison} 给出了 SCF-DeepONet 与 VanillaDeepONet 在独立测试集上的 Stage 3 性能对比，涵盖热图检测指标（IoU）与三维场重构指标（RMSE）两个维度。
+
+\begin{table}[htbp]
+    \centering
+    \tabcaption{SCF-DeepONet 与 VanillaDeepONet Stage 3 性能对比}{Stage 3 Performance Comparison: SCF-DeepONet vs VanillaDeepONet}
+    \label{tab:ablation_comparison}
+
+    \renewcommand{\arraystretch}{1.25}
+    \zihao{5}
+
+    \begin{threeparttable}
+    \begin{tabularx}{0.98\textwidth}{
+        >{\centering\arraybackslash}p{0.12\textwidth}
+        >{\centering\arraybackslash}p{0.09\textwidth}
+        >{\centering\arraybackslash}p{0.09\textwidth}
+        >{\centering\arraybackslash}p{0.09\textwidth}
+        >{\centering\arraybackslash}p{0.09\textwidth}
+        >{\centering\arraybackslash}p{0.09\textwidth}
+        >{\centering\arraybackslash}p{0.09\textwidth}
+        >{\centering\arraybackslash}p{0.09\textwidth}
+    }
+        \toprule
+        模型 & Mean IoU & Median IoU & Worst-10 Avg IoU & Mean RMSE & Median RMSE & P90 RMSE & Worst-10 Avg RMSE \\
+        \midrule
+        Vanilla DeepONet & 67.79\% & 73.52\% & 37.09\% & 1.82e-1 & 1.80e-1 & 2.24e-1 & 2.32e-1 \\
+        SCF-DeepONet & 81.53\% & 85.57\% & 51.34\% & 1.77e-1 & 1.72e-1 & 2.17e-1 & 2.23e-1 \\
+        \bottomrule
+    \end{tabularx}
+    \begin{tablenotes}
+        \footnotesize
+        \item 注：热图检测指标为 IoU，三维场重构指标为 RMSE（归一化量纲）。
+    \end{tablenotes}
+    \end{threeparttable}
+\end{table}
+
+从热图检测指标来看，在完全一致的 Stage 3 精修条件下，SCF-DeepONet 的各项 IoU 指标均显著优于 VanillaDeepONet。具体而言，SCF-DeepONet 的 Mean IoU 相较 VanillaDeepONet 提升了约 13.73\%，Median IoU 提升了约 12.04\%，而 Worst-10 Avg IoU 提升了约 14.24\%。Worst-10 指标的改善尤为关键，它说明 SCF-DeepONet 的架构设计不仅提升了典型样本上的检测精度，更增强了对复杂边界和长尾困难工况的鲁棒性。
+
+从三维场重构指标来看，SCF-DeepONet 在 Mean RMSE、Median RMSE、P90 RMSE 以及 Worst-10 Avg RMSE 上同样全面低于 VanillaDeepONet。这一结果表明，第三章所提出的多层级条件编码、Fourier 位置编码以及 FiLM 调制等组件，并非冗余设计，而是针对 EMT 多激励观测与连续场回归问题特点的必要架构扩展——它们不仅改善了二维热图检测，也同步提升了三维差场重构的质量。
+
+进一步，图 \ref{fig:ablation_cdf} 给出了两模型在测试集上 IoU 的累积分布函数。SCF-DeepONet 的曲线在所有 IoU 阈值上均位于 VanillaDeepONet 上方，说明其性能优势不仅体现在均值层面，更覆盖了整个样本分布——包括困难样本尾部。图 \ref{fig:ablation_heatmap_grid} 展示了代表性样本的热图预测可视化对比，可以直观观察到 SCF-DeepONet 的预测边界更加清晰、与真实伤损框的重合度更高，而 VanillaDeepONet 的预测存在更为明显的边界模糊和伪影现象。
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.76\textwidth]{figures/fig_ablation_cdf.png}
+    \figcaption{SCF-DeepONet 与 VanillaDeepONet 的 IoU 累积分布对比}{CDF Comparison of IoU between SCF-DeepONet and VanillaDeepONet}
+    \label{fig:ablation_cdf}
+\end{figure}
+
+\begin{figure}[ht]
+    \centering
+    \includegraphics[width=0.78\textwidth]{figures/fig_ablation_heatmap_grid.jpg}
+    \figcaption{代表性样本热图预测对比}{Representative Heatmap Prediction Comparison}
+    \label{fig:ablation_heatmap_grid}
+\end{figure}
+
+\subsection{消融实验结论}
+\label{subsec:ablation_conclusion}
+
+综合 Stage 3 消融实验的定量和定性结果，可以得出以下结论：
+
+\textbf{（1）本文所提出的 SCF-DeepONet 架构设计是改善铁磁性 EMT 伤损检测性能的关键因素。} 在完全相同的训练流程、数据集和评估协议下，SCF-DeepONet 相较经典 Vanilla DeepONet 基线在热图检测 IoU 上取得了明显提升（Mean IoU 提升约 13.73\%，Worst-10 Avg IoU 提升约 14.24\%）。这一提升幅度明确表明，本文针对 EMT 多激励结构化输入和连续域输出所设计的共享条件编码、Fourier 位置编码、FiLM 调制、CNN 特征图精修以及热图--场耦合机制，是适配铁磁性 EMT 逆问题特点的必要架构扩展，而非冗余设计。
+
+\textbf{（2）性能优势覆盖全样本分布。} SCF-DeepONet 不仅在 Mean IoU 上大幅领先，在 Worst-10 Avg IoU 以及 CDF 尾部同样保持显著优势；三维场重构指标在 P90 和 Worst-10 尾部也全面优于基线。证明其架构设计增强了模型对复杂边界和长尾工况的鲁棒性，而非仅提升了``容易样本''的拟合能力。
+
+\textbf{（3）后续训练策略分析建立在可靠架构基线之上。} 在确认网络架构本身具有显著优越性的前提下，下节中对训练策略（Stage 演进、A 场辅助任务作用）的分析将建立在已验证的架构基线之上，避免了``训练策略的收益可能来源于架构本身''的混淆。换言之，后文所讨论的辅助监督与 PDE 约束，是在已经具备较好检测能力的架构基础上进一步探索的增强手段，而非弥补架构缺陷的补救措施。
+
+\section{监督基线构建}
+\label{sec:supervised_baselines}
+
+本节构建纯热图监督与热图--场量联合监督两类基线模型，作为后续 A 场辅助任务分析、分布外泛化实验以及 PDE 物理约束实验的对比参照。
+
+\textbf{纯热图监督基线：} 仅使用二维伤损热图标签，经 Stage 1 预训练与 Stage 3 精修得到。该基线代表了在不借助三维场辅助信息的条件下，模型在``电压响应 $\\rightarrow$ 二维伤损热图''映射任务上的检测能力。
+
+\textbf{热图--场量联合监督基线：} 在 Stage 2 中引入三维差场辅助监督，并同样经 Stage 3 精修得到。与纯热图基线相比，该模型通过多任务联合训练使共享特征空间保留了与三维电磁散射结构相关的判别性信息。
+
+两类基线采用一致的 SCF-DeepONet 架构、相同的数据划分和精修协议，以保证对比的公平性。关于各 Stage 的训练机制与参数冻结策略，详见第 \ref{sec:curriculum_training} 节，此处不再赘述。
+
+\section{A 场辅助任务对伤损检测性能的影响}
+\label{sec:impact_of_a_field}
+
+在确立纯热图监督模型与热图--场量联合监督模型之后，本节进一步通过消融实验分析三维差场辅助任务对二维伤损检测性能的实际影响。需要强调的是，本节关注的重点并非三维场本身的重构精度，而是三维差场辅助监督是否改变了模型对二维伤损检测任务的特征提取方式，以及这种改变是否能够提升模型在困难样本和分布外形状下的鲁棒性。
+
+\subsection{同分布矩形伤损上的对比}
+\label{subsec:id_comparison}
+
+首先，在与训练分布一致的矩形伤损测试集上对两类模型进行比较。表 \ref{tab:heatmap_id_ood_comparison} 给出了两类模型在同分布矩形测试集和圆形伤损零样本测试集上的热图评价指标。
+
+从同分布矩形测试结果可以看出，纯热图监督模型在 Mean IoU 和 Median IoU 上分别达到 $75.16\%$ 和 $80.73\%$，略高于热图--场量联合监督模型的 $73.82\%$ 和 $78.25\%$。这说明，在训练分布内部，纯热图模型由于所有参数更新均直接服务于二维检测任务，能够形成较高效的同分布拟合能力。A 场辅助任务在此场景下并未以牺牲 ID 精度为代价换取泛化，而是体现了其作为\textbf{训练阶段正则化机制}的定位：它并不追求在熟悉样本上更激进地拟合，而是通过三维场约束迫使共享特征保留更具物理泛化性的表征——这正是后续 PINN 强约束能够生效的前提。
+
+\begin{table}[htbp]
+    \centering
+    \tabcaption{不同测试集模型性能指标对比}{Comparison of model performance metrics on different test sets}
+    \label{tab:heatmap_id_ood_comparison}
+
+    \renewcommand{\arraystretch}{1.25}
+    \zihao{5}
+
+    \begin{threeparttable}
+    \begin{tabularx}{0.98\textwidth}{
+        >{\centering\arraybackslash}p{0.12\textwidth}
+        >{\centering\arraybackslash}p{0.10\textwidth}
+        >{\centering\arraybackslash}p{0.10\textwidth}
+        >{\centering\arraybackslash}p{0.10\textwidth}
+        >{\centering\arraybackslash}p{0.12\textwidth}
+        >{\centering\arraybackslash}p{0.10\textwidth}
+        >{\centering\arraybackslash}p{0.10\textwidth}
+        >{\centering\arraybackslash}p{0.10\textwidth}
+    }
+        \toprule
+        \multirow{2}{*}{模型} &
+        \multicolumn{3}{c}{矩形伤损测试集（ID）} &
+        \multicolumn{3}{c}{圆形伤测试集（OOD）} \\
+        \cmidrule(lr){2-4}\cmidrule(lr){5-7}
+        & Mean IoU & Median IoU & Worst-10 Avg IoU
+        & Mean IoU & Median IoU & Worst-10 Avg IoU \\
+        \midrule
+        纯热图
+        & $75.16\%$ & $80.73\%$ & $42.90\%$
+        & $34.05\%$ & $40.47\%$ & $0.00\%$ \\
+        热图--场量联合
+        & $73.82\%$ & $78.25\%$ & $46.16\%$
+        & $40.31\%$ & $46.02\%$ & $2.33\%$ \\
+        \bottomrule
+    \end{tabularx}
+    \end{threeparttable}
+\end{table}
+
+图 \ref{fig:rectangular_samples} 给出了矩形测试集中代表性样本的可视化结果。图中每一列对应同一个样本，上方为真实伤损掩膜，下方分别为两类模型的预测热图。可以看出，在表现较好的样本上，两类模型均能够较准确地覆盖真实伤损区域；但在困难样本中，纯热图监督模型更容易出现局部偏移、伪热点或边界响应分散等现象，而热图--场量联合监督模型的预测区域相对更加集中，位置也更接近真实伤损区域。这一现象与表 \ref{tab:heatmap_id_ood_comparison} 中 Worst-10 Avg IoU 的统计结果一致。
+
+\begin{figure}[ht]
+    \centering
+    \includegraphics[width=0.78\textwidth]{figures/TestSet_Ranks.jpg}
+    \figcaption{矩形测试集代表性样本预测结果}{Representative prediction results on the rectangular test set}
+    \label{fig:rectangular_samples}
+\end{figure}
+
+为了进一步从传统 EMT 成像方法与深度学习方法的角度进行对比，图 \ref{fig:traditional_comparison} 给出了多种传统反演算法与 SCF-DeepONet 在十个随机测试样本上的重建结果。该图包含样本数量较多、子图排列较密，因此本文将其设置为独立浮动页，以避免其压缩正文空间或造成大面积空白。
+
+\begin{figure}[p]
+    \centering
+    \includegraphics[width=\textwidth,height=0.84\textheight,keepaspectratio]{figures/Traditional_vs_DL_10Samples_Transposed.jpg}
+    \figcaption{传统算法与SCF-DeepONet检测结果对比}{Comparison of traditional and SCF-DeepONet detection results}
+    \label{fig:traditional_comparison}
+\end{figure}
+
+从图 \ref{fig:traditional_comparison} 可以看出，传统线性重建方法能够在一定程度上反映伤损扰动趋势，但其结果通常存在较明显的扩散、伪影和边界模糊现象；相比之下，SCF-DeepONet 直接从多视角电压响应中学习非线性映射关系，能够输出更加集中的伤损概率区域。该对比说明，在铁磁材料 EMT 这种强非线性、病态性较强的问题中，深度学习模型具有更强的特征整合能力和检测表达能力。
+
+\subsection{圆形伤损零样本测试中的 OOD 泛化对比}
+\label{subsec:ood_comparison}
+
+为了进一步检验模型是否真正学习到了具有物理意义的共享表征，本文构建了圆形伤损零样本测试集。该测试集中的伤损几何形状与训练阶段使用的矩形标签明显不同，因此能够有效考察模型面对未见过几何边界时的迁移能力。
+
+由表 \ref{tab:heatmap_id_ood_comparison} 可以看出，面对圆形伤损 OOD 测试，两类模型的 IoU 均较同分布矩形测试明显下降，说明几何分布偏移确实给模型检测带来了显著挑战。但相较于纯热图监督模型，热图--场量联合监督模型在三项指标上均取得更好表现：其 Mean IoU 为 $40.31\%$，高于纯热图监督模型的 $34.05\%$；Median IoU 为 $46.02\%$，高于纯热图监督模型的 $40.47\%$；Worst-10 Avg IoU 为 $2.33\%$，而纯热图监督模型在该指标上为 $0.00\%$。
+
+图 \ref{fig:circular_ood_samples} 给出了圆形伤损零样本测试中的代表性预测结果。可以看出，纯热图监督模型在若干样本中出现了明显的响应漂移和伪热点现象，预测区域与真实圆形伤损位置之间存在较大偏差。相比之下，热图--场量联合监督模型虽然仍无法完全精确恢复圆形边界，但其响应区域更加集中，伤损位置判断更加稳定，说明三维差场辅助任务确实增强了模型对未知形状的适应能力。而传统图像重建算法的表现与矩形集上几乎一致，故不再给出单独对比图。
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.80\textwidth]{figures/ood_ranks.jpg}
+    \figcaption{圆形伤损零样本测试集代表性样本预测结果}{Representative prediction results on the circular OOD test set}
+    \label{fig:circular_ood_samples}
+\end{figure}
+
+这一结果具有重要意义。若模型仅依赖二维矩形热图标签进行训练，则其特征提取过程更容易围绕``矩形几何模板''形成统计相关性；一旦测试样本的真实形状发生改变，模型原先建立的映射关系便容易失效。相反，当引入三维差场辅助任务后，共享观测编码模块必须同时解释二维几何标签与三维电磁散射场之间的对应关系，从而被迫学习更加底层、更加具有物理约束性的共享表征。这种表征虽然不一定在训练分布内带来最高平均精度，却能在分布外场景中表现出更好的迁移能力。
+
+\subsection{A 场辅助任务的作用机制分析}
+\label{subsec:mechanism_analysis}
+
+综合同分布矩形测试与圆形伤损零样本测试结果，可以更清晰地理解三维 A 场辅助任务在本文框架中的实际作用。
+
+首先，A 场预测并非系统部署阶段必须直接输出的最终工程结果，其更核心的价值体现在训练阶段。通过在主检测任务之外增加三维差场回归约束，网络前端的共享观测编码模块不再只是学习``多通道观测响应到二维热图''的直接映射，而是必须进一步保留与三维电磁散射结构相关的信息。因此，A 场辅助任务本质上是一种\textbf{训练阶段的中间监督与特征正则化机制}。
+
+其次，从实验结果来看，A 场辅助任务\textbf{并未}在同分布矩形样本上取得更高的平均检测精度（Mean IoU 与 Median IoU 略低于纯热图模型），但在长尾困难样本（Worst-10 Avg IoU 提升约 3.26\%）和圆形 OOD 样本（Mean IoU 从 34.05\% 提升至 40.31\%）上表现出了更稳定的检测下限和更好的泛化能力。这说明，A 场辅助任务的主要收益并不体现在``让模型在熟悉样本上更激进地拟合''，而体现在\textbf{抑制模型对训练形状模板的过拟合，并提升复杂工况下的鲁棒性}。这一结论也与第三章中将 A 场任务定位为``训练阶段辅助机制''的设计意图一致。
+
+\textbf{需要特别指出的是，A 场辅助任务的引入具有双重动机。} 从工程角度看，它虽小幅改善了分布外泛化能力（圆形 OOD Mean IoU 提升约 6.3\%），却伴随显著的训练代价：三维差场标签（$16 \times 50000 \times 6$ 通道）使单样本存储量约为纯热图监督的 $3 \sim 5$ 倍，Stage 2 多任务训练使周期延长约 $40\% \sim 60\%$，且场真值依赖高精度有限元仿真。因此，是否引入 A 场需根据性能需求与资源限制权衡。
+
+\textbf{从方法论角度看，A 场任务是 PINN 物理约束嵌入的``弱形式预实验''。} 在 EMT 这类高维复杂系统中，直接冷启动施加麦克斯韦方程 PDE 约束常面临梯度冲突与数值不稳定。Stage 2 的三维差场监督并不直接构造 PDE 微分残差，而是要求网络场输出与有限元仿真数值解保持一致——这是一种``数据驱动近似''的 PINN。通过该弱约束，本文验证了``场--检测耦合''路径的可行性，并使网络习得了具有物理合理性的三维场表征，为 Stage 4 严格 PDE 约束提供了良好的参数初始化基础。若跳过该阶段直接施加强约束，三维场分支常因缺乏合理初始化而难以收敛。A 场任务以仿真标签替代复杂 PDE 残差推导，以较低门槛完成了物理信息嵌入的价值验证与模型预热，是 PINN 在 EMT 伤损检测中的``软化入口''。
+
+最后，还需要将 A 场辅助监督与后续 PDE 物理微调区分开来。就本文现有实验结果而言，二维检测性能的改善\textbf{主要来源于 Stage 2}，而非后续 Stage 4 的 PDE 微调。前者主要改善共享特征表征质量，后者则主要用于在三维场分支上进一步提升物理一致性，且\textbf{不直接作用于二维检测指标}。二者虽然都与``物理信息引入''有关，但作用层次和目标各不相同：A 场辅助监督服务于检测泛化性能，PDE 弱约束服务于场预测的物理一致性。
+
+\section{PDE 弱物理约束的引入与实现}
+\label{sec:pde_implementation}
+
+前三节的实验结果表明，三维差场辅助监督能够增强共享特征的物理表达能力，并提升模型在困难样本和分布外形状下的泛化鲁棒性。然而，Stage 1 至 Stage 3 本质上仍属于监督式数据驱动训练，其约束主要来自有限元仿真生成的离散标签。当网络面对复杂边界、极端工况或局部数据稀疏区域时，三维场预测仍可能出现不完全符合电磁学规律的局部畸变。
+
+为进一步提升三维场重构结果的物理一致性，本文在 Stage 4 中引入基于麦克斯韦方程组的偏微分方程（Partial Differential Equation, PDE）弱物理约束\upcite{wang2021physicsinformed}，对三维场分支进行后期微调。
+
+\textbf{需要预先明确的是，该阶段的核心作用对象为三维场分支，其直接优化目标在于改善三维场重构的物理一致性，而非提升二维伤损检测指标。}由于 Stage 4 的训练策略为冻结共享观测编码模块与二维热图分支、仅微调三维场分支，因此 PDE 弱约束并不直接参与或改变二维热图的预测过程。后续实验也将围绕三维场重构误差展开评价，以与其设计目标保持一致。
+
+\subsection{铁磁材料 EMT 问题的 PDE 约束形式}
+\label{subsec:pde_formulation}
+
+对于 EMT 时谐场问题，在准静态近似下，磁矢势 $\mathbf{A}$ 满足的变系数旋度--旋度控制方程已由 \eqref{eqn:pde_governing} 给出。由于道岔钢轨及其等效铁磁试块具有高磁导率和高电导率特性，伤损的存在同时改变局部电导率 $\sigma(\mathbf{x})$ 与磁导率 $\mu(\mathbf{x})$，因此不宜采用常系数简化形式。在 Stage 4 的 PDE 微调中，物理残差采样区域主要选取试块内部及远场空气等无显式源项区域（$\mathbf{J}_s=0$），从而得到式 \eqref{eqn:pde_residual} 所示的残差形式。
+
+由于网络输出的磁矢势采用实部与虚部分离的六通道形式，本文在实现中将式 \eqref{eqn:pde_residual} 分解为实部残差与虚部残差分别计算。旋度及二阶旋度相关项则通过自动微分获得。模型所采用的主要物理常数包括 $100\,\mathrm{kHz}$ 激励频率、真空磁导率 $\mu_0$、铁磁基体相对磁导率 $\mu_{r,\mathrm{iron}}$ 以及铁磁基体和空气缺陷区域的电导率参数。上述物理量在 PDE 计算中均统一采用国际单位制，从而保证控制方程各项在物理量纲上的一致性。
+
+以下进一步给出总场构造、软伤损掩膜以及数值稳定化策略的具体实现。
+
+对于 EMT 时谐场问题，在准静态近似下，以磁阻率 $\nu(\mathbf{x})=1/\mu(\mathbf{x})$ 表示的磁矢势控制方程为
+\begin{equation}
+\label{eqn:pde_governing}
+\nabla \times \bigl[ \nu(\mathbf{x}) \nabla \times \mathbf{A}(\mathbf{x}) \bigr]
++ \mathrm{j}\omega\sigma(\mathbf{x})\mathbf{A}(\mathbf{x})
+= \mathbf{J}_s(\mathbf{x}) 
+\end{equation}
+其中 $\mathbf{J}_s$ 为外部激励源电流密度，$\sigma$ 和 $\mu$ 分别为电导率和磁导率分布，$\omega$ 为激励角频率。在引入 PDE 弱约束时，首先由网络预测的总场 $\mathbf{A}_{\mathrm{total}}$ 构造 PDE 残差。由于本文在源-free 区域计算残差（$\mathbf{J}_s=0$），残差形式简化为
+\begin{equation}
+\label{eqn:pde_residual}
+\mathbf{r}(\mathbf{x})
+=
+\nabla \times \bigl[ \nu(\mathbf{x}) \nabla \times \mathbf{A}_{\mathrm{total}}(\mathbf{x}) \bigr]
++ \mathrm{j}\omega\sigma(\mathbf{x})\,\mathbf{A}_{\mathrm{total}}(\mathbf{x}) 
+\end{equation}
+
+由于铁磁性材料中磁导率与电导率的跨度极大，直接对原始 SI 单位下的残差平方积分容易导致损失尺度严重失衡。为此，本文采用动态相对归一化策略：将式 \eqref{eqn:pde_residual} 分解为旋度项 $\mathbf{r}_{\mathrm{curl}}$ 与质量项 $\mathbf{r}_{\mathrm{mass}}$，分别估计二者的均方根量级并以该动态尺度对残差进行归一化。由此得到的相对 PDE 损失定义为
+\begin{equation}
+\label{eqn:pde_loss_relative}
+L_{\mathrm{PDE,rel}}
+=
+\frac{1}{|\Omega_{\mathrm{PDE}}|}
+\int_{\Omega_{\mathrm{PDE}}}
+\left(
+    \left\| \frac{\mathbf{r}_{\mathrm{curl}}(\mathbf{x})}{S_{\mathrm{curl}}} \right\|_2^2
+    +
+    \left\| \frac{\mathbf{r}_{\mathrm{mass}}(\mathbf{x})}{S_{\mathrm{mass}}} \right\|_2^2
+\right)
+\mathrm{d}\mathbf{x} 
+\end{equation}
+其中 $S_{\mathrm{curl}}$ 和 $S_{\mathrm{mass}}$ 分别为对应物理项在计算域 $\Omega_{\mathrm{PDE}}$ 上的均方根幅值，在梯度传播时以 detached 方式计算以避免归一化因子本身引入额外梯度。该动态相对残差形式能够在不同材料区域和场量强度下保持较为均衡的损失尺度，避免铁磁材料高磁导率区域残差绝对值过大而主导梯度更新。
+
+\subsection{总场形式与软伤损掩膜}
+\label{subsec:total_field_mask}
+
+需要指出的是，SCF-DeepONet 三维分支在监督训练阶段预测的是差场 $\Delta\mathbf{A}$，而 PDE 控制方程约束的对象应为物理意义上的总场。因此，在计算 PDE 残差之前，需要首先将网络预测的差场与无伤损基准场叠加为总场 $\mathbf{A}_{\mathrm{total}} = \mathbf{A}_0 + \Delta\hat{\mathbf{A}}$（参见式 \eqref{eq:A_total}），随后将归一化形式下的总场恢复到真实物理量纲，再代入式 \eqref{eqn:pde_residual} 计算残差。
+
+另一方面，式 \eqref{eqn:pde_residual} 中的材料参数 $\mu(\mathbf{x})$ 和 $\sigma(\mathbf{x})$ 与伤损几何位置密切相关。若直接采用硬阶跃函数描述铁磁基体与空气伤损之间的边界，会在自动微分计算中引入不可导点或剧烈梯度震荡。为此，本文采用软伤损掩膜（Soft Defect Mask）构造连续材料分布。
+
+具体而言，根据训练样本的真实伤损几何参数和缺陷深度，在三维 PDE 采样点上构造一个取值范围为 $[0,1]$ 的连续掩膜函数
+\begin{equation}
+\label{eq:soft_mask}
+M(\mathbf{x})\in[0,1]
+\end{equation}
+其中，$M(\mathbf{x})$ 接近 0 表示该点更接近铁磁基体区域，$M(\mathbf{x})$ 接近 1 表示该点更接近空气缺陷区域。基于该软掩膜，磁导率和电导率分别写为
+\begin{equation}
+\label{eq:mu_soft}
+\mu(\mathbf{x})
+=
+\mu_0
+\left[
+\mu_{r,\mathrm{iron}}
+\left(1-M(\mathbf{x})\right)
++
+M(\mathbf{x})
+\right]
+\end{equation}
+\begin{equation}
+\label{eq:sigma_soft}
+\sigma(\mathbf{x})
+=
+\sigma_{\mathrm{iron}}
+\left(1-M(\mathbf{x})\right)
++
+\sigma_{\mathrm{air}}M(\mathbf{x})
+\end{equation}
+
+这种处理方式在材料边界附近引入了平滑过渡，避免了硬边界导致的数值不稳定问题。需要说明的是，本文 Stage 4 中的软掩膜并不是由模型预测热图直接生成，而是由训练样本的真实几何参数构造，其目的在于稳定地近似材料分布，并为可导的 PDE 残差计算提供物理参数场。
+
+\subsection{PDE 数值稳定化策略}
+\label{subsec:pde_stabilization}
+
+在深度学习框架中直接计算铁磁性 EMT 问题的 PDE 残差，数值上存在较大挑战。一方面，磁矢势场本身的物理量级较小；另一方面，控制方程中同时包含 $\omega$、$\mu_0$、$\sigma$ 等具有明确量纲的物理常数。若不进行合理尺度处理，PDE 损失很容易与监督损失发生量级失衡，甚至导致梯度爆炸或训练崩塌。为保证 Stage 4 稳定收敛，本文采用以下数值稳定化策略。
+
+\textbf{（1）统一物理量纲并采用单精度计算。}
+网络训练阶段使用归一化坐标与归一化场量，但在计算 PDE 残差时，需要将空间坐标、空间导数和磁矢势场恢复至国际单位制下的真实物理尺度。特别地，涉及空间求导的坐标尺度统一采用米制单位。考虑到自动微分求取旋度和二阶旋度时对数值精度较为敏感，本文在 PDE 残差计算中关闭混合精度训练，统一采用 FP32 精度进行计算，以提高物理残差的稳定性。
+
+\textbf{（2）采用相对残差而非原始 SI 残差。}
+若直接对原始 SI 单位下的 PDE 残差平方求均值，则不同物理项之间的尺度差异可能导致物理损失严重失衡。为此，本文对 PDE 残差进行无量纲化处理。具体而言，分别估计旋度项
+\[
+\nabla\times
+\left(
+\nu\nabla\times A
+\right)
+\]
+和质量项
+\[
+\omega\sigma A
+\]
+的均方根量级，并以二者的综合尺度对原始残差进行归一化。由此得到的相对 PDE 残差能够保持在较稳定的数量级范围内，便于与三维场监督损失共同优化。
+
+\textbf{（3）冻结共享编码与热图分支，仅微调场分支。}
+由于 PDE 弱约束的目标是对已收敛的三维场预测进行局部物理修正，而非重新学习整体映射，因此 Stage 4 中冻结共享观测编码模块和二维热图分支的全部参数，仅保留三维场分支为可训练状态。该策略可有效防止 PDE 项在优化初期对已经稳定的检测性能产生干扰，同时也降低了训练过程中的梯度冲突风险。
+
+\subsection{PDE 微调实验结果与分析}
+\label{subsec:pde_experiment_results}
+
+为验证 PDE 弱物理约束对三维场重构一致性的实际改善效果，本文在 Stage 4 中对 65 个独立矩形测试样本分别计算了引入 PDE 前后的三维场重构 RMSE，并采用第 \ref{subsec:statistical_analysis} 节所述的配对统计分析方法进行评价，图\ref{fig:pde_scatter}给出了NoPDE与PDE模型的逐样本RMSE配对散点图。图中虚线表
+示$y=x$，即两种模型误差相同的参考线。可以看到，绝大多数样本点均位于该参
+考线下方，说明PDE模型在多数测试样本上均取得了更低的RMSE。
+
+\begin{figure}[ht]
+    \centering
+    \includegraphics[width=0.68\textwidth]{figures/Scatter_NoPDE_vs_PDE.jpg}
+    \figcaption{NoPDE与PDE模型逐样本RMSE配对散点图}{Scatter plot of paired RMSE for NoPDE vs PDE models}
+    \label{fig:pde_scatter}
+\end{figure}
+
+在 65 个测试样本中，有 62 个样本在引入 PDE 弱约束后三维场重构 RMSE 出现下降，占比约为 95.4\%。Wilcoxon 符号秩检验结果表明，该配对差异在统计学上具有显著性（$p < 0.05$）。这说明 PDE 弱约束并非在个别样本上产生偶然改善，而是在大多数样本上形成了稳定、一致的场重构误差压制效果。
+
+从误差分布来看，引入 PDE 后 Mean RMSE 出现了小幅下降，但相比数据驱动监督本身所达到的水平，PDE 带来的绝对改进幅度较为有限。这一现象与 Stage 4 的设计意图一致：由于 PDE 仅作为一种后期弱正则项参与优化，且训练参数仅涉及三维场分支，其主要作用在于修正数据驱动模型中的局部非物理偏差，而非重新构建场分布的整体形态。换言之，PDE 弱约束的贡献体现在``使已经较好的场预测更加符合物理规律''，而非``从根本上大幅提升场重构精度''。
+
+\textbf{需要特别强调的是，由于 Stage 4 冻结了共享观测编码模块与二维热图分支，PDE 弱物理约束并不直接参与二维伤损热图的预测过程。} 因此，从二维检测指标（IoU）角度观察，引入 PDE 后的热图检测结果与 Stage 3 精修后的结果基本一致，未出现显著变化。这一结果与预期相符：PDE 约束的设计目标在于提升三维场分支的物理一致性，而非改变二维检测决策边界。
+
+综上，PDE 弱物理微调在本文框架中的实际作用可概括为：在已具备较好检测性能的 SCF-DeepONet 基础上，通过引入麦克斯韦方程相对残差对三维场分支进行保守式后期修正，使场预测结果在多数样本上获得小幅但统计显著的物理一致性改善。该阶段不直接服务于二维伤损检测指标的提升，而是为模型的可解释性和物理可靠性提供补充保障。
+
+\section{本章小结}
+\label{sec:ch4_conclusion}
+
+本章围绕 SCF-DeepONet 模型的训练优化与实验验证展开，从网络架构消融、监督基线构建、A 场辅助任务分析和 PDE 弱物理约束四个方面进行了系统评估。
+
+首先，通过与经典 Vanilla DeepONet 的消融对比，验证了本文所提出的 SCF-DeepONet 架构设计在铁磁性 EMT 伤损检测中的核心价值：在完全相同的训练条件下，Mean IoU 提升约 13.73\%，Worst-10 Avg IoU 提升约 14.24\%，且性能优势覆盖整个样本分布。这一结果表明，共享条件编码、Fourier 位置编码、FiLM 调制以及热图--场耦合机制是针对 EMT 多激励结构化输入和连续域输出需求的必要架构扩展，\textbf{构成了本文在检测性能上取得跨越式提升的唯一来源}。
+
+在此基础上，本章进一步分析了三维差场辅助监督对二维伤损检测的实际影响。实验表明，A 场辅助任务虽未在同分布矩形样本上取得更高的平均 IoU（Mean IoU 甚至略低于纯热图模型），但在困难样本检测下限和圆形伤损零样本泛化能力上表现出更稳定的优势（OOD Mean IoU 从 34.05\% 提升至 40.31\%）。这说明 A 场辅助监督的核心价值不在于直接提升同分布检测精度，而在于\textbf{抑制模型对训练形状模板的过拟合、提升复杂工况下的鲁棒性}。从方法论层面看，该阶段更重要的是承担了\textbf{PINN 物理约束嵌入的渐进预实验}角色——以数据驱动的弱形式验证了物理信息在 EMT 逆问题中的嵌入路径可行性，为后续严格 PDE 约束提供了必要的三维场初始化基础。
+
+最后，本章讨论了 PDE 弱物理约束在三维场分支上的应用效果。实验表明，PDE 微调能够在不破坏二维检测性能的前提下，使 62/65 样本的三维场重构误差获得小幅而统计显著的改善。但需要明确的是，该阶段仅作用于三维场分支，不直接参与二维热图预测，因此其贡献\textbf{主要体现在场预测的物理一致性层面，而非检测精度的进一步提升}。它是 Stage 2 预实验的自然延续，而非独立的检测性能来源。
+
+综上所述，本章通过严格的消融实验和基线对比，确立了本文各技术组件的贡献层次：\textbf{SCF-DeepONet 架构创新是提升铁磁性 EMT 伤损检测性能的首要且唯一因素}；三维差场辅助监督是增强泛化鲁棒性的训练机制，更是 PINN 强约束不可或缺的渐进预实验；PDE 弱约束是在预实验基础上对场预测物理一致性的补充精修。\textbf{三者并非并列的独立贡献，而是``主架构 + 预实验铺垫 + 后期精修''的递进关系}，共同构成了面向道岔伤损检测的 SCF-DeepONet 智能反演方案。
