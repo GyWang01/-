@@ -1,0 +1,38 @@
+# # Compiled class file
+# *.class
+
+# # Log file
+# *.log
+
+# # BlueJ files
+# *.ctxt
+
+# # Mobile Tools for Java (J2ME)
+# .mtj.tmp/
+
+# # Package Files #
+# *.jar
+# *.war
+# *.ear
+# *.zip
+# *.tar.gz
+# *.rar
+
+# # virtual machine crash logs, see http://www.java.com/en/download/help/error_hotspot.xml
+# hs_err_pid*
+# *.log
+# *.aux
+# *.synctex.gz
+# *.out
+# *.toc
+# 1. 忽略当前目录及子目录下的所有文件（黑名单全开）
+*
+
+# 2. 例外：不要忽略任何文件夹（这样 Git 才能深入各个子目录去寻宝）
+!*/
+
+# 3. 例外：把你真正需要的 LaTeX 源文件从黑名单里捞出来
+!*.tex
+
+# 4. 例外：（强烈建议）把 .gitignore 文件本身也留下来，方便以后做调整
+!.gitignore
