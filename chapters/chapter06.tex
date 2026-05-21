@@ -146,7 +146,7 @@
 
 \begin{figure}[!htb]
     \centering
-    \includegraphics[width=0.94\textwidth]{figures/MutualVoltage_BarChart.png}
+    \includegraphics[width=0.98\textwidth]{figures/MutualVoltage_BarChart.png}
     \figcaption{空场线圈对互感电压测试结果}{Mutual voltage test results of the coil pairs}
     \label{fig:mutual_voltage}
 \end{figure}
@@ -170,6 +170,7 @@
 \label{eq:t_ch}
 T_{ch}=T_{switch}+T_{LPF}+2T_{conv},
 \end{equation}
+
 式中，$T_{switch}$ 为继电器与模拟开关完成通道切换后的稳定时间；$T_{LPF}$ 为锁相放大器后级低通滤波器的稳态建立时间；$T_{conv}$ 为 ADC 单次转换时间。由于同相与正交两路直流量均需采集，因此式中包含两次 ADC 转换时间。
 
 根据实验设置，本文中通道切换稳定时间约为 3 ms，滤波器稳态建立时间约为 0.7 ms，ADC 单次转换时间约为 1 ms。因此，单通道测量时间约为
@@ -177,6 +178,7 @@ T_{ch}=T_{switch}+T_{LPF}+2T_{conv},
 \label{eq:t_ch_value}
 T_{ch}\approx 3+0.7+2\times1=5.7\,\mathrm{ms}.
 \end{equation}
+
 进一步可得单帧测量周期为
 \begin{equation}
 \label{eq:t_frame}
@@ -187,26 +189,55 @@ T_{frame}=N_{channels}T_{ch}=256\times5.7\,\mathrm{ms}\approx1.46\,\mathrm{s}.
 
 \section{道岔仿损检测试验与成像验证}
 
-在完成基础性能测试后，本文进一步搭建了道岔仿损检测实验平台，对所研制便携式 EMT 系统在实际检测任务中的应用能力进行验证。实验对象采用机加工缺陷铁磁试块，用以等效模拟道岔表面及近表面伤损。测试过程中，系统采集阵列线圈在不同激励条件下的复数响应，并分别采用传统 EMT 成像方法和 SCF-DeepONet 模型进行结果分析。
+在完成基础性能测试后，本文进一步搭建了道岔仿损检测实验平台，对所研制便携式 EMT 系统在实际检测任务中的应用能力进行验证。实验对象采用含机加工开口缺陷的铁磁性试块，用以等效模拟道岔尖轨、基本轨等部位常见的剥离掉块、压溃掉块及局部缺口类表面或近表面伤损。需要指出的是，本文实验等效对象主要为开口型、材料缺失型伤损，对闭合疲劳裂纹、深部裂纹及复杂分层裂纹等非开口型伤损的检测能力仍需后续结合真实道岔试件和更多伤损类型进一步验证。
+
+测试过程中，系统采集阵列线圈在不同激励条件下的复数响应，并分别采用传统 EMT 成像方法和 SCF-DeepONet 模型进行结果分析。
 
 图 \ref{fig:experiment_platform} 给出了本文搭建的实验平台实物图。可以看出，传感器阵列贴近铁磁试块表面布置，测控板与信号切换板共同完成激励、接收、解调和数据回传。该实验平台能够较好模拟实际便携式检测中的传感器贴附和硬件采集过程。
+
+% \begin{figure}[!htb]
+%     \centering
+
+%     \begin{minipage}[t]{0.48\textwidth}
+%         \centering
+%         \includegraphics[width=\textwidth]{figures/experiment1.jpg}\\[-2pt]
+%         {\zihao{5}(a) 伤损检测平台正照\\ {\zihao{5}(a) Front view of the damage detection platform}}
+%     \end{minipage}
+%     \hfill
+%     \begin{minipage}[t]{0.48\textwidth}
+%         \centering
+%         \includegraphics[width=\textwidth]{figures/experiment2.jpg}\\[-2pt]
+%         {\zihao{5}(b) 伤损检测平台背照\\ {\zihao{5}(b) Back view of the damage detection platform}}
+%     \end{minipage}
+
+%     \figcaption{伤损检测实验平台实物图}{Physical photo of the defect detection platform}
+%     \label{fig:experiment_platform}
+% \end{figure}
+
+% \begin{figure}[!htb]
+%     \centering
+%     \includegraphics[width=0.82\textwidth]{figures/experiment.jpg}
+%     \figcaption{伤损检测实验平台实物图}{Physical photo of the defect detection platform}
+%     \label{fig:experiment_platform}
+% \end{figure}
 
 \begin{figure}[!htb]
     \centering
 
-    \begin{minipage}[t]{0.48\textwidth}
+    \begin{minipage}[c]{0.64\textwidth}
         \centering
-        \includegraphics[width=\textwidth]{figures/experiment1.jpg}\\[-2pt]
-        {\zihao{5}(a) 伤损检测平台正照\\ {\zihao{5}(a) Front view of the damage detection platform}}
-    \end{minipage}
-    \hfill
-    \begin{minipage}[t]{0.48\textwidth}
-        \centering
-        \includegraphics[width=\textwidth]{figures/experiment2.jpg}\\[-2pt]
-        {\zihao{5}(b) 伤损检测平台背照\\ {\zihao{5}(b) Back view of the damage detection platform}}
+        \includegraphics[width=\textwidth]{figures/31.jpg}\\[-2pt]
+        {\zihao{5}(a) 伤损检测平台正照 \\ {\zihao{5}(a) Front view of the damage detection platform}}
     \end{minipage}
 
-    \figcaption{伤损检测实验平台实物图}{Physical photo of the defect detection platform}
+    \vspace{0.20cm}
+
+    \begin{minipage}[c]{0.64\textwidth}
+        \centering
+        \includegraphics[width=\textwidth]{figures/32.jpg}\\[-2pt]
+        {\zihao{5}(b) 伤损检测平台背照\\ {\zihao{5}(b) Back view of the damage detection platform}}
+    \end{minipage}
+    \figcaption{伤损检测平台实物图}{Physical photo of the damage detection platform}
     \label{fig:experiment_platform}
 \end{figure}
 
@@ -248,7 +279,7 @@ T_{frame}=N_{channels}T_{ch}=256\times5.7\,\mathrm{ms}\approx1.46\,\mathrm{s}.
 
     \begin{minipage}[t]{0.90\textwidth}
         \centering
-        \includegraphics[width=0.36\textwidth, angle=90]{figures/iron_bulk.jpg}\\[-2pt]
+        \includegraphics[width=0.82\textwidth]{figures/bulk.jpg}\\[-2pt]
         {\zihao{5}(e) 机加工伤损实物图\\ {\zihao{5}(e) machining-induced damage}}
     \end{minipage}
 
